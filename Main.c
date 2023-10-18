@@ -11,6 +11,7 @@
 #define BOARD_MASK 0b11111110111111101111111011111110111111101111111
 
 #define SELF_PLAY 0
+#define WEAK_SOLVER 0
 
 // A struct to hold the state of the board
 // the game board is 6 tall and 7 wide
@@ -72,13 +73,15 @@ void printBoard(BoardState board) {
 }
 
 // converts the eval to moves to win 
-int convertEval(int eval, BoardState* board) {
+int convertEval(int eval, int player, BoardState* board) {
     if (eval == 0) {
         return 0;
     }
 
     // use p1 stone count as a proxy for the number of moves played so far
-    return (MAX_STONES - __builtin_popcountll(board->p1)) - eval;
+    int retVal = (eval > 0) ? (MAX_STONES - __builtin_popcountll((player) ? board->p2 : board->p1)) - eval
+                : -(MAX_STONES - __builtin_popcountll((player) ? board->p2 : board->p1)) - eval + 1;
+    return retVal;
 }
 
 // return a bitmap of all the winning free spots making an alignment
@@ -113,6 +116,15 @@ unsigned long long int computeWinningPosition(unsigned long long position, unsig
     return r & ~occupied & BOARD_MASK;
 }
 
+// check if the board is in a winning state
+unsigned long long isAligned(BoardState* board, int player) {
+    unsigned long long playerPos = (player) ? board->p2 : board->p1;
+    unsigned long long occupied = board->p1 | board->p2;
+    unsigned long long winningMoves = computeWinningPosition(playerPos, occupied);
+
+    return winningMoves & playerPos;
+}
+
 void makeMove(BoardState* board, unsigned long long moves, int player, HashTable* table) {
     if (player) {
         board->p2 = board->p2 ^ moves;
@@ -145,18 +157,18 @@ unsigned long long generateMoves(BoardState* board) {
 // insertion sort the arrays 
 void sortArray(char* sortArray, char* valArray, int size) {
     for (int i = 1; i < size; i++) {
-        int j = i;
-        while (j > 0 && sortArray[j - 1] < sortArray[j]) {
-            char temp = sortArray[j];
-            sortArray[j] = sortArray[j - 1];
-            sortArray[j - 1] = temp;
+        char keySort = sortArray[i];
+        char keyVal = valArray[i];
+        int j = i - 1;
 
-            temp = valArray[j];
-            valArray[j] = valArray[j - 1];
-            valArray[j - 1] = temp;
-
+        while (j >= 0 && sortArray[j] < keySort) {
+            sortArray[j + 1] = sortArray[j];
+            valArray[j + 1] = valArray[j];
             j--;
         }
+
+        sortArray[j + 1] = keySort;
+        valArray[j + 1] = keyVal;
     }
 }
 
@@ -171,7 +183,8 @@ int sortMoves(BoardState* board, unsigned long long moves, char order[], int pla
     unsigned long long move;
     int index = WIDTH;
 
-    // make a mask of moves that don't loss the game immediately
+    // make bit mask that represent the winning moves for both players
+    unsigned long long winningMoves = computeWinningPosition(playerPos, occupied);
     unsigned long long opponentWinningPos = computeWinningPosition(opponentPos, occupied);
     unsigned long long nonLossingMoves = opponentWinningPos & moves;
 
@@ -187,19 +200,27 @@ int sortMoves(BoardState* board, unsigned long long moves, char order[], int pla
 
     for (int i = 0; i < WIDTH; i++) {
         move = ((moveMasker << order[i]) & moves);
+
+        if (move & winningMoves) {
+            score[i] = 100;
+            index--;
+            continue;
+        }
+
         if (!move) {
             score[i] = -10;
             index--;
             continue;
         }
 
-        // we should not play moves that loss imidiatly
+        // we should not play moves that lose imidiatly
         if (!(nonLossingMoves & move)) {
             score[i] = -9;
+            index--;
             continue;
         }
 
-        // get a count of winning oprotunities for each move
+        // get a count of winning oprotunities for each move this is the default score
         score[i] = __builtin_popcountll(computeWinningPosition(playerPos | move, occupied | move));
     }
 
@@ -217,8 +238,20 @@ int negamax(BoardState* board, int player, int alpha, int beta, HashTable* table
     // generate moves 
     unsigned long long moves = generateMoves(board);
 
+    // check for a draw
     if (!moves)
         return 0;
+
+    // check for a winning move if found store it in the table
+    unsigned long long winningMoves = computeWinningPosition((player) ? board->p2 : board->p1, board->p1 | board->p2);
+    if (winningMoves & moves) {
+        // score is 1 if the player can win with the last stone, 2 if the 
+        // player can win with the second last stone etc...
+        int score = MAX_STONES - (__builtin_popcountll((player) ? board->p2 : board->p1) + 1);
+        addEntry(table, board->hash, player, score, __builtin_ctzll(winningMoves & moves) % (WIDTH + 1), EXACT);
+        
+        return score;
+    }
 
     // check if the board is in the table
     Entry* entry = getEntry(table, board->hash);
@@ -234,20 +267,9 @@ int negamax(BoardState* board, int player, int alpha, int beta, HashTable* table
         }
     }
 
-    if (alpha >= beta) {
+    // check for a cutoff
+    if (alpha >= beta)
         return beta;
-    }
-
-    // check for a winning move if found store it in the table
-    unsigned long long winningMoves = computeWinningPosition((player) ? board->p2 : board->p1, board->p1 | board->p2);
-    if (winningMoves & moves) {
-        // score is 1 if the player can win with the last stone, 2 if the 
-        // player can win with the second last stone etc...
-        int score = MAX_STONES - (__builtin_popcountll((player) ? board->p2 : board->p1) + 1);
-        addEntry(table, board->hash, player, score, __builtin_ctzll(winningMoves & moves) % (WIDTH + 1), EXACT);
-        
-        return score;
-    }
 
     unsigned long long move;
     int eval;
@@ -260,13 +282,17 @@ int negamax(BoardState* board, int player, int alpha, int beta, HashTable* table
 
     int losingStart = sortMoves(board, moves, exploreOrder, player);
 
+    if (losingStart == 0) {
+        // there are no moves that don't lose the game immediately
+        // return the score for the opponent winning in the next move
+        int score = -(MAX_STONES - (__builtin_popcountll((player) ? board->p1 : board->p2) + 1));
+        addEntry(table, board->hash, player, score, __builtin_ctzll(moves & (moveMasker << exploreOrder[0])) % (WIDTH + 1), EXACT);
+        return score;
+    }
+
     // loop through moves until there are no more or a cutoff occures
-    for (int i = 0; i < 7; i++) {
+    for (int i = 0; i < losingStart; i++) {
         move = moves & (moveMasker << exploreOrder[i]);
-        if (!move) {
-            // null moves are sorted to the end of the array
-            break;
-        }
 
         makeMove(board, move, player, table);
 
@@ -286,6 +312,7 @@ int negamax(BoardState* board, int player, int alpha, int beta, HashTable* table
         }
     }
 
+    // set the transposition table flags
     char flag;
     if (bestEval <= alphaOrig)
         flag = FAIL_LOW;
@@ -301,7 +328,7 @@ int negamax(BoardState* board, int player, int alpha, int beta, HashTable* table
 }
 
 // solve the board
-int solve(BoardState* board, int player, HashTable* table) {
+int solve(BoardState* board, int player, HashTable* table, int weak) {
     memset(table->entries, 0, sizeof(Entry) * table->size);
     clock_t start = clock();
     board->nodes = 0;
@@ -311,6 +338,11 @@ int solve(BoardState* board, int player, HashTable* table) {
     int min = -(MAX_STONES - __builtin_popcountll(board->p1)); 
     int max = MAX_STONES - __builtin_popcountll(board->p1);
 
+    if (weak) {
+        min = -1;
+        max = 1;
+    }
+
 
     while(min < max) {
         int med = min + (max - min ) / 2;
@@ -319,7 +351,8 @@ int solve(BoardState* board, int player, HashTable* table) {
         else if(med >= 0 && max / 2 > med)
             med = max / 2;
 
-        eval = negamax(board, player, med, med + 1, table);  // use a null depth window
+        // use a null depth window search
+        eval = negamax(board, player, med, med + 1, table);
 
         if(eval <= med)
             max = eval;
@@ -329,7 +362,9 @@ int solve(BoardState* board, int player, HashTable* table) {
         printf("Window: %d %d\n", min, max);
     }
 
-    printf("Eval: %d\n", convertEval(eval, board));
+    printf("Eval: %d\n", convertEval(eval, player, board));
+    printf("Nodes: %lld\n", board->nodes);
+    printf("Time: %f\n", (double)(clock() - start) / CLOCKS_PER_SEC);
 
     return min;
 }
@@ -343,13 +378,12 @@ int playGame(int player) {
     unsigned long long moves;
     unsigned long long move;
 
-    // test p1 win in 14 moves (27 ply)
-    board.p2 = 0b00000000000101000000010000010000000001000001001;
-    board.p1 = 0b00010000000000000001000000000100000100101000010;
+    // test p1 win in 18 moves
+    board.p1 = 0b00000000000100000000000000010000000000000001000;
+    board.p2 = 0b00000000000000000001000000000000000100000000001;
 
-    // call solve to populate the table and get starting eval
-    solve(&board, player, table);
-    Entry* entry = getEntry(table, board.hash);
+    // get a random hash for the board
+    Entry* entry = table->entries + (board.hash % table->size);
 
     int playing = 1;
     while (playing) {
@@ -365,11 +399,10 @@ int playGame(int player) {
 
         printBoard(board);
         printf(" 6 5 4 3 2 1 0\n");
-        printf("Eval: %d\n", convertEval(entry->value, &board));
 
         // get the computer move
         if (player || SELF_PLAY) {
-            solve(&board, player, table);
+            solve(&board, player, table, WEAK_SOLVER);
             entry = getEntry(table, board.hash);
             move = moves & (moveMasker << entry->move);
             makeMove(&board, move, player, table);
@@ -384,12 +417,12 @@ int playGame(int player) {
             
         }
 
-        if (convertEval(entry->value, &board) == 1) {
-            printf("\n");
-            printBoard(board);
-            printf("Player %d wins\n", player + 1);
-            playing = 0;
-            break;
+        if (isAligned(&board, player)) {
+           printf("\n");
+           printBoard(board);
+           printf("Player %d wins\n", player + 1);
+           playing = 0;
+           break;
         }
 
         // invert the player
@@ -410,40 +443,28 @@ int runTests() {
     //board.p1 = 0b00001000000010000000100000000; // check for diagonal win
     //board.p1 = 0b00000000001000001000001000000000000; // check for other diagonal win
 
-    // test p1 win in 6 moves (11 ply)
+    // test p1 win in 6 moves
     //board.p1 = 0b00000100000111000010010010011000001001001001110;
     //board.p2 = 0b000111000101000001001100000100100100110000010001;
 
-    // test p1 win in 14 moves (27 ply)
-    //board.p1 = 0b00000000000101000000010000010000000001000001001;
-    //board.p2 = 0b00010000000000000001000000000100000100101000010;
+    // test p1 win in 14 moves
+    board.p1 = 0b00000000000101000000010000010000000001000001001;
+    board.p2 = 0b00010000000000000001000000000100000100101000010;
 
-    // test p1 win in 18 moves (35 ply)
-    board.p1 = 0b00000000000100000000000000010000000000000001000;
-    board.p2 = 0b00000000000000000001000000000000000100000000001;
+    // test p1 win in 18 moves
+    //board.p1 = 0b00000000000100000000000000010000000000000001000;
+    //board.p2 = 0b00000000000000000001000000000000000100000000001;
 
     
     printBoard(board);
 
-    // get the start time
-    clock_t start = clock();
-
-    solve(&board, 0, table);
-
-    // get the end time
-    clock_t end = clock();
-
-    // get the time taken
-    double time_taken = (double)(end - start) / CLOCKS_PER_SEC;
-    printf("\nTime taken: %f\n", time_taken);
+    solve(&board, 0, table, WEAK_SOLVER);
 
     freeHashTable(table);
-
 }
-
 
 int main(int argc, char* argv[]) {
     runTests();
-    //playGame(1);
+    playGame(0);
 }
 
