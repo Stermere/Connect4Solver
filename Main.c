@@ -11,7 +11,7 @@
 #define BOARD_MASK 0b11111110111111101111111011111110111111101111111
 
 #define SELF_PLAY 0
-#define WEAK_SOLVER 0
+#define WEAK_SOLVER 1
 
 // A struct to hold the state of the board
 // the game board is 6 tall and 7 wide
@@ -154,6 +154,21 @@ unsigned long long generateMoves(BoardState* board) {
     return moves;
 }
 
+// returns a board mask of the moves that don't lose the game immediately
+unsigned long long getNonLosingMove(BoardState* board, unsigned long long moves, int player) {
+    unsigned long long opponentWinningPos = computeWinningPosition((player) ? board->p1 : board->p2, board->p1 | board->p2);
+    unsigned long long opponentWinningMoves = opponentWinningPos & moves;
+
+    // there is nothing to do this position is lost since there are two winning moves for the opponent
+    if (__builtin_popcountll(opponentWinningMoves) > 1)
+        return 0;
+    else if (!opponentWinningMoves)
+        opponentWinningMoves = moves;
+    
+    // avoid playing below a winning move
+    return opponentWinningMoves & ~(opponentWinningPos >> (WIDTH + 1));
+}
+
 // insertion sort the arrays 
 void sortArray(char* sortArray, char* valArray, int size) {
     for (int i = 1; i < size; i++) {
@@ -178,44 +193,15 @@ int sortMoves(BoardState* board, unsigned long long moves, char order[], int pla
     char score[WIDTH];
     unsigned long long moveMasker = MOVE_MASK;
     unsigned long long playerPos = (player) ? board->p2 : board->p1;
-    unsigned long long opponentPos = (player) ? board->p1 : board->p2;
     unsigned long long occupied = board->p1 | board->p2;
     unsigned long long move;
     int index = WIDTH;
 
-    // make bit mask that represent the winning moves for both players
-    unsigned long long winningMoves = computeWinningPosition(playerPos, occupied);
-    unsigned long long opponentWinningPos = computeWinningPosition(opponentPos, occupied);
-    unsigned long long nonLossingMoves = opponentWinningPos & moves;
-
-    // there is nothing to do this position is lost since there are two winning moves for the opponent
-    if (nonLossingMoves && __builtin_popcountll(nonLossingMoves) > 1) {
-        nonLossingMoves = 0;
-    } else {
-        nonLossingMoves = moves;
-    }
-    
-    // avoid playing below a winning move
-    nonLossingMoves = nonLossingMoves & ~(opponentWinningPos >> (WIDTH + 1));
-
     for (int i = 0; i < WIDTH; i++) {
         move = ((moveMasker << order[i]) & moves);
 
-        if (move & winningMoves) {
-            score[i] = 100;
-            index--;
-            continue;
-        }
-
         if (!move) {
-            score[i] = -10;
-            index--;
-            continue;
-        }
-
-        // we should not play moves that lose imidiatly
-        if (!(nonLossingMoves & move)) {
-            score[i] = -9;
+            score[i] = -1;
             index--;
             continue;
         }
@@ -242,14 +228,14 @@ int negamax(BoardState* board, int player, int alpha, int beta, HashTable* table
     if (!moves)
         return 0;
 
-    // check for a winning move if found store it in the table
-    unsigned long long winningMoves = computeWinningPosition((player) ? board->p2 : board->p1, board->p1 | board->p2);
-    if (winningMoves & moves) {
-        // score is 1 if the player can win with the last stone, 2 if the 
-        // player can win with the second last stone etc...
-        int score = MAX_STONES - (__builtin_popcountll((player) ? board->p2 : board->p1) + 1);
-        addEntry(table, board->hash, player, score, __builtin_ctzll(winningMoves & moves) % (WIDTH + 1), EXACT);
-        
+    // get non losing moves
+    unsigned long long nonLossingMoves = getNonLosingMove(board, moves, player);
+
+    // there are no moves that don't lose the game immediately
+    // return the score for the opponent winning in the next move
+    if (!nonLossingMoves) {
+        int score = -(MAX_STONES - (__builtin_popcountll((player) ? board->p1 : board->p2) + 1));
+        addEntry(table, board->hash, player, score, __builtin_ctzll(moves) % (WIDTH + 1), EXACT);
         return score;
     }
 
@@ -280,15 +266,9 @@ int negamax(BoardState* board, int player, int alpha, int beta, HashTable* table
     // explore the middle columns first as they are more likely to be good moves
     char exploreOrder[] = { 3, 2, 4, 1, 5, 0, 6 };
 
-    int losingStart = sortMoves(board, moves, exploreOrder, player);
-
-    if (losingStart == 0) {
-        // there are no moves that don't lose the game immediately
-        // return the score for the opponent winning in the next move
-        int score = -(MAX_STONES - (__builtin_popcountll((player) ? board->p1 : board->p2) + 1));
-        addEntry(table, board->hash, player, score, __builtin_ctzll(moves & (moveMasker << exploreOrder[0])) % (WIDTH + 1), EXACT);
-        return score;
-    }
+    // sort by the number of winning positions they create and 
+    // don't explore the losing moves
+    int losingStart = sortMoves(board, nonLossingMoves, exploreOrder, player);
 
     // loop through moves until there are no more or a cutoff occures
     for (int i = 0; i < losingStart; i++) {
@@ -378,10 +358,6 @@ int playGame(int player) {
     unsigned long long moves;
     unsigned long long move;
 
-    // test p1 win in 18 moves
-    board.p1 = 0b00000000000100000000000000010000000000000001000;
-    board.p2 = 0b00000000000000000001000000000000000100000000001;
-
     // get a random hash for the board
     Entry* entry = table->entries + (board.hash % table->size);
 
@@ -400,6 +376,8 @@ int playGame(int player) {
         printBoard(board);
         printf(" 6 5 4 3 2 1 0\n");
 
+        unsigned long long winningMoves = computeWinningPosition((player) ? board.p2 : board.p1, board.p1 | board.p2);
+
         // get the computer move
         if (player || SELF_PLAY) {
             solve(&board, player, table, WEAK_SOLVER);
@@ -417,7 +395,7 @@ int playGame(int player) {
             
         }
 
-        if (isAligned(&board, player)) {
+        if (winningMoves & move) {
            printf("\n");
            printBoard(board);
            printf("Player %d wins\n", player + 1);
@@ -448,12 +426,12 @@ int runTests() {
     //board.p2 = 0b000111000101000001001100000100100100110000010001;
 
     // test p1 win in 14 moves
-    board.p1 = 0b00000000000101000000010000010000000001000001001;
-    board.p2 = 0b00010000000000000001000000000100000100101000010;
+    //board.p1 = 0b00000000000101000000010000010000000001000001001;
+    //board.p2 = 0b00010000000000000001000000000100000100101000010;
 
     // test p1 win in 18 moves
-    //board.p1 = 0b00000000000100000000000000010000000000000001000;
-    //board.p2 = 0b00000000000000000001000000000000000100000000001;
+    board.p1 = 0b00000000000100000000000000010000000000000001000;
+    board.p2 = 0b00000000000000000001000000000000000100000000001;
 
     
     printBoard(board);
@@ -465,6 +443,6 @@ int runTests() {
 
 int main(int argc, char* argv[]) {
     runTests();
-    playGame(0);
+    playGame(1);
 }
 
