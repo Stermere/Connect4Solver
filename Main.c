@@ -72,6 +72,19 @@ void printBoard(BoardState board) {
     }
 }
 
+// get a valid move from the user
+int getMove() {
+    int move;
+    printf("Enter Your Move:");
+    scanf("%d", &move);
+    while (move < 0 || move > WIDTH - 1) {
+        printf("Enter a valid move:");
+        scanf("%d", &move);
+    }
+
+    return move;
+}
+
 // converts the eval to moves to win 
 int convertEval(int eval, int player, BoardState* board) {
     if (eval == 0) {
@@ -323,7 +336,6 @@ int solve(BoardState* board, int player, HashTable* table, int weak) {
         max = 1;
     }
 
-
     while(min < max) {
         int med = min + (max - min ) / 2;
         if (med <= 0 && min / 2 < med)
@@ -358,6 +370,10 @@ int playGame(int player) {
     unsigned long long moves;
     unsigned long long move;
 
+    // test p1 win in 18 moves
+    board.p1 = 0b00000000000100000000000000010000000000000001000;
+    board.p2 = 0b00000000000000000001000000000000000100000000001;
+
     // get a random hash for the board
     Entry* entry = table->entries + (board.hash % table->size);
 
@@ -387,9 +403,7 @@ int playGame(int player) {
             printf("Computer plays: %d\n", entry->move);
         }
         else {
-            // TODO abstract input validation to a function
-            printf("Enter move: ");
-            scanf("%d", &move);
+            move = getMove();
             move = moves & (moveMasker << move);
             makeMove(&board, move, player, table);
             
@@ -422,27 +436,34 @@ int runTests() {
     //board.p1 = 0b00000000001000001000001000000000000; // check for other diagonal win
 
     // test p1 win in 6 moves
-    //board.p1 = 0b00000100000111000010010010011000001001001001110;
-    //board.p2 = 0b000111000101000001001100000100100100110000010001;
+    board.p1 = 0b00000100000111000010010010011000001001001001110;
+    board.p2 = 0b000111000101000001001100000100100100110000010001;
+
+    printf("Expected: 6\n");
+    solve(&board, 0, table, WEAK_SOLVER);
+    printf("\n");
 
     // test p1 win in 14 moves
-    //board.p1 = 0b00000000000101000000010000010000000001000001001;
-    //board.p2 = 0b00010000000000000001000000000100000100101000010;
+    board.p1 = 0b00000000000101000000010000010000000001000001001;
+    board.p2 = 0b00010000000000000001000000000100000100101000010;
+
+    printf("Expected: 14\n");
+    solve(&board, 0, table, WEAK_SOLVER);
+    printf("\n");
 
     // test p1 win in 18 moves
     board.p1 = 0b00000000000100000000000000010000000000000001000;
     board.p2 = 0b00000000000000000001000000000000000100000000001;
 
-    
-    printBoard(board);
-
+    printf("Expected: 18\n");
     solve(&board, 0, table, WEAK_SOLVER);
+    printf("\n");
 
     freeHashTable(table);
 }
 
 int main(int argc, char* argv[]) {
     runTests();
-    playGame(1);
+    playGame(0);
 }
 
