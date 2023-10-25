@@ -1,4 +1,4 @@
-#define HASH_TABLE_SIZE 32ull // in MB
+#define HASH_TABLE_SIZE 128ull // in MB
 #define MB_SIZE 1000000ull
 
 #define FAIL_HIGH 1
@@ -46,8 +46,7 @@ unsigned long long mt_rand(struct mt_state *state) {
 }
 
 typedef struct {
-    unsigned long long hash;
-    char player;
+    unsigned long hash;
     char value;
     char move;
     char flag;
@@ -55,7 +54,7 @@ typedef struct {
 
 typedef struct {
     Entry* entries;
-    unsigned long long* zobrist;
+    unsigned long* zobrist;
     unsigned long long size;
 } HashTable;
 
@@ -66,11 +65,11 @@ HashTable* initHashTable() {
     table->entries = malloc(table->size * sizeof(Entry));
 
     // Init the Zobrist hashing table
-    table->zobrist = malloc(sizeof(unsigned long long) * 64 * 2);
+    table->zobrist = malloc(sizeof(unsigned long) * 64 * 2);
     struct mt_state state;
     mt_init(&state, 0xdeadbeef);
     for (int i = 0; i < 64 * 2; i++) {
-        table->zobrist[i] = mt_rand(&state);
+        table->zobrist[i] = (unsigned long)mt_rand(&state);
     }
 
     return table;
@@ -82,7 +81,7 @@ void freeHashTable(HashTable* table) {
     free(table);
 }
 
-Entry* getEntry(HashTable* table, unsigned long long hash) {
+Entry* getEntry(HashTable* table, unsigned long hash) {
     if (table->entries[hash % table->size].hash == hash) {
         return &table->entries[hash % table->size];
     }
@@ -90,10 +89,9 @@ Entry* getEntry(HashTable* table, unsigned long long hash) {
 
 }
 
-void addEntry(HashTable* table, unsigned long long hash, char player, char value, char move, char flag) {
+void addEntry(HashTable* table, unsigned long hash, char value, char move, char flag) {
     Entry* entry = table->entries + (hash % table->size);
     entry->hash = hash;
-    entry->player = player;
     entry->value = value;
     entry->move = move;
     entry->flag = flag;
