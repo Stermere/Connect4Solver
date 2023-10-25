@@ -75,11 +75,20 @@ void printBoard(BoardState board) {
 // get a valid move from the user
 int getMove() {
     int move;
-    printf("Enter Your Move:");
-    scanf("%d", &move);
-    while (move < 0 || move > WIDTH - 1) {
-        printf("Enter a valid move:");
-        scanf("%d", &move);
+    printf("Enter Your Move:\n");
+    while (1) {
+        if (scanf("%d", &move) != 1) {
+            printf("Invalid input. Enter a valid move:\n");
+            int c;
+            while ((c = getchar()) != '\n' && c != EOF);
+            continue;
+        }
+
+        if (move < 0 || move > WIDTH - 1) {
+            printf("Enter a valid move:\n");
+        } else {
+            break;
+        }
     }
 
     return move;
@@ -229,7 +238,7 @@ int sortMoves(BoardState* board, unsigned long long moves, char order[], int pla
 }
 
 int negamax(BoardState* board, int player, int alpha, int beta, HashTable* table) {
-    int bestEval = -1000;
+    int bestEval = -100;
     int alphaOrig = alpha;
     int bestMove = -1;
     board->nodes++;
@@ -251,6 +260,12 @@ int negamax(BoardState* board, int player, int alpha, int beta, HashTable* table
         addEntry(table, board->hash, score, __builtin_ctzll(moves) % (WIDTH + 1), EXACT);
         return score;
     }
+
+    // get an upper bound on the board, since we can't win immediately
+    int max = MAX_STONES - (__builtin_popcountll((player) ? board->p2 : board->p1) + 2);
+    // keeping beta below the max possible value increases the chance of a cutoff
+    if (beta > max)
+        beta = max;
 
     // check if the board is in the table
     Entry* entry = getEntry(table, board->hash);
@@ -322,6 +337,15 @@ int solve(BoardState* board, int player, HashTable* table, int weak) {
     clock_t start = clock();
     board->nodes = 0;
     int eval = 0;
+
+    // quickly check if there is a winning move (negmax never explores these since it detects wins one move ahead)
+    unsigned long long moves = generateMoves(board);
+    unsigned long long winningMoves = computeWinningPosition((player) ? board->p2 : board->p1, board->p1 | board->p2);
+    if (winningMoves & moves) {
+        int score = MAX_STONES - (__builtin_popcountll((player) ? board->p2 : board->p1) + 1);
+        char move =  __builtin_ctzll(winningMoves & moves) % (WIDTH + 1);
+        addEntry(table, board->hash, score, move, EXACT);
+    }
 
     // min and max values from the current state
     int min = -(MAX_STONES - __builtin_popcountll(board->p1)); 
@@ -457,8 +481,8 @@ int runTests() {
     HashTable* table = initHashTable();
 
     // test n ply search
-    unsigned long long nodes = nPlySearch(10, &board, 0, table);
-    printf("Expected Nodes: 47025259\n");
+    unsigned long long nodes = nPlySearch(8, &board, 0, table);
+    printf("Expected Nodes: 960751\n");
     printf("Nodes: %lld\n", nodes);
 
     // test p1 win in 6 moves
