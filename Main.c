@@ -345,6 +345,7 @@ int solve(BoardState* board, int player, HashTable* table, int weak) {
         int score = MAX_STONES - (__builtin_popcountll((player) ? board->p2 : board->p1) + 1);
         char move =  __builtin_ctzll(winningMoves & moves) % (WIDTH + 1);
         addEntry(table, board->hash, score, move, EXACT);
+        return score;
     }
 
     // min and max values from the current state
@@ -513,7 +514,7 @@ int runTests() {
 }
 
 int main(int argc, char* argv[]) {
-    runTests();
+    //runTests();
     playGame(0);
 }
 
