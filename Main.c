@@ -373,11 +373,11 @@ int solve(BoardState* board, int player, HashTable* table, int weak) {
             min = eval;
     }
 
-    printf("Eval: %d\n", convertEval(eval, player, board));
-    printf("Nodes: %lld\n", board->nodes);
-    printf("Time: %f\n", (double)(clock() - start) / CLOCKS_PER_SEC);
+    // printf("Eval: %d\n", convertEval(eval, player, board));
+    // printf("Nodes: %lld\n", board->nodes);
+    // printf("Time: %f\n", (double)(clock() - start) / CLOCKS_PER_SEC);
 
-    return min;
+    return eval;
 }
 
 // play a game with player starting first player is 0 or 1 
@@ -476,6 +476,61 @@ unsigned long long nPlySearch(int n, BoardState* board, int player, HashTable* t
     return sum + 1;
 }
 
+// run the benchmark tests
+int benchmark(char* filename) {
+    // open the file
+    FILE* file = fopen(filename, "r");
+    if (file == NULL) {
+        printf("Error opening file\n");
+        return 1;
+    }
+
+    // for each line of the file solve the board
+    char line[100];
+    BoardState board;
+    initBoard(&board);
+    HashTable* table = initHashTable();
+    int solved = 0;
+
+    while (fgets(line, sizeof(line), file)) {
+        // convert the line to a board
+        int i;
+        int player = 0;
+        for (i = 0; line[i] != ' '; i++) {
+            unsigned long long moves = generateMoves(&board);
+            if (!player) {
+                makeMove(&board, MOVE_MASK << (line[i] - '0' - 1) & moves, player, table);
+            }
+            else if (player) {
+                makeMove(&board, MOVE_MASK << (line[i] - '0' -  1) & moves, player, table);
+            }
+            player = !player;        
+        }
+
+        // get the expected result
+        int expected = atoi(line + i + 1);
+
+        // solve the board
+        int found = solve(&board, player, table, WEAK_SOLVER);
+
+        // compare the result
+        if (expected != found) {
+            printf("Error: %d != %d\n", expected, found);
+        }
+
+        // reset the board and hash table
+        board.p1 = 0;
+        board.p2 = 0;
+        board.hash = 0;
+        memset(table->entries, 0, table->size * sizeof(Entry));
+
+        if (expected == found)
+            printf("Solved: %d\n", ++solved);
+    }
+
+    fclose(file);
+}
+
 int runTests() {
     BoardState board;
     initBoard(&board);
@@ -515,6 +570,7 @@ int runTests() {
 
 int main(int argc, char* argv[]) {
     //runTests();
+    benchmark(argv[1]);
     playGame(0);
 }
 
