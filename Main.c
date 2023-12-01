@@ -11,7 +11,7 @@
 #define BOARD_MASK 0b11111110111111101111111011111110111111101111111
 
 #define SELF_PLAY 0
-#define WEAK_SOLVER 0
+#define WEAK_SOLVER 1
 
 // A struct to hold the state of the board
 // the game board is 6 tall and 7 wide
@@ -492,6 +492,9 @@ int benchmark(char* filename) {
     HashTable* table = initHashTable();
     int solved = 0;
 
+    // get the start time
+    clock_t start = clock();
+
     while (fgets(line, sizeof(line), file)) {
         // convert the line to a board
         int i;
@@ -513,63 +516,41 @@ int benchmark(char* filename) {
         // solve the board
         int found = solve(&board, player, table, WEAK_SOLVER);
 
-        // compare the result
-        if (expected != found) {
-            printf("Error: %d != %d\n", expected, found);
-        }
-
         // reset the board and hash table
         board.p1 = 0;
         board.p2 = 0;
         board.hash = 0;
         memset(table->entries, 0, table->size * sizeof(Entry));
 
-        if (expected == found)
+        if (expected != found && !WEAK_SOLVER) {
+            printf("Error: %d %d\n", expected, found);
+            printBinBoard(board.p1);
+            printBinBoard(board.p2);
+            printBinBoard(board.hash);
+            break;
+        }
+        else if (expected * found < 0 && WEAK_SOLVER) {
+            printf("Error: %d %d\n", expected, found);
+            printBinBoard(board.p1);
+            printBinBoard(board.p2);
+            printBinBoard(board.hash);
+            break;
+        }
+        else {
             printf("Solved: %d\n", ++solved);
+        }
     }
+
+    // get the end time
+    clock_t end = clock();
+
+    // print the mean time per board
+    printf("Mean time per board: %f\n", (double)(end - start) / CLOCKS_PER_SEC / solved);
 
     fclose(file);
 }
 
-int runTests() {
-    BoardState board;
-    initBoard(&board);
-    HashTable* table = initHashTable();
-
-    // test n ply search
-    unsigned long long nodes = nPlySearch(8, &board, 0, table);
-    printf("Expected Nodes: 960751\n");
-    printf("Nodes: %lld\n", nodes);
-
-    // test p1 win in 6 moves
-    board.p1 = 0b00000100000111000010010010011000001001001001110;
-    board.p2 = 0b000111000101000001001100000100100100110000010001;
-
-    printf("Expected: 6\n");
-    solve(&board, 0, table, WEAK_SOLVER);
-    printf("\n");
-
-    // test p1 win in 14 moves
-    board.p1 = 0b00000000000101000000010000010000000001000001001;
-    board.p2 = 0b00010000000000000001000000000100000100101000010;
-
-    printf("Expected: 14\n");
-    solve(&board, 0, table, WEAK_SOLVER);
-    printf("\n");
-
-    // test p1 win in 18 moves
-    board.p1 = 0b00000000000100000000000000010000000000000001000;
-    board.p2 = 0b00000000000000000001000000000000000100000000001;
-
-    printf("Expected: 18\n");
-    solve(&board, 0, table, WEAK_SOLVER);
-    printf("\n");
-
-    freeHashTable(table);
-}
-
 int main(int argc, char* argv[]) {
-    //runTests();
     benchmark(argv[1]);
     playGame(0);
 }
