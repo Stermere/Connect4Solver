@@ -1,4 +1,4 @@
-#define HASH_TABLE_SIZE 128ull // in MB
+#define HASH_TABLE_SIZE 64ull // in MB
 #define MB_SIZE 1000000ull
 
 #define FAIL_HIGH 1
