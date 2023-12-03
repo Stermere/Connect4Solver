@@ -11,7 +11,9 @@
 #define BOARD_MASK 0b11111110111111101111111011111110111111101111111
 
 #define SELF_PLAY 0
-#define WEAK_SOLVER 1
+#define WEAK_SOLVER 0
+#define BOOK_COMPUTE_DEPTH 5
+#define BOOK_DIR "OpeningBook5"
 
 // A struct to hold the state of the board
 // the game board is 6 tall and 7 wide
@@ -104,6 +106,40 @@ int convertEval(int eval, int player, BoardState* board) {
     int retVal = (eval > 0) ? (MAX_STONES - __builtin_popcountll((player) ? board->p2 : board->p1)) - eval
                 : -(MAX_STONES - __builtin_popcountll((player) ? board->p2 : board->p1)) - eval + 1;
     return retVal;
+}
+
+int findBookMove(char* bookDir, BoardState* board) {
+    // open the file
+    FILE* file = fopen(bookDir, "r");
+    if (file == NULL) {
+        printf("Error opening file\n");
+        return 1;
+    }
+
+    // for each line of the file check if the board matches
+    char line[100];
+    unsigned long long p1;
+    unsigned long long p2;
+    int move;
+    int eval;
+
+    while(fgets(line, sizeof(line), file)) {
+        // each line is 4 numbers seperated by spaces
+        sscanf(line, "%llu %llu %d %d", &p1, &p2, &move, &eval);
+
+        // check if the board matches inverted or not
+        if (board->p1 == p1 && board->p2 == p2) {
+            fclose(file);
+            return move;
+        }
+        else if (board->p1 == p2 && board->p2 == p1) {
+            fclose(file);
+            return move;
+        }
+
+    }
+
+    return -1;
 }
 
 // return a bitmap of all the winning free spots making an alignment
@@ -211,20 +247,26 @@ void sortArray(char* sortArray, char* valArray, int size) {
 
 // sort the moves by the number of winning positions they create
 // use insertion sort as the list is small and mostly sorted
-int sortMoves(BoardState* board, unsigned long long moves, char order[], int player) {
+int sortMoves(BoardState* board, unsigned long long moves, char order[], int player, Entry* entry) {
     char score[WIDTH];
     unsigned long long moveMasker = MOVE_MASK;
     unsigned long long playerPos = (player) ? board->p2 : board->p1;
     unsigned long long occupied = board->p1 | board->p2;
     unsigned long long move;
     int index = WIDTH;
-
+    
     for (int i = 0; i < WIDTH; i++) {
         move = ((moveMasker << order[i]) & moves);
 
         if (!move) {
-            score[i] = -1;
+            score[i] = -10;
             index--;
+            continue;
+        }
+
+        // check if this is the transposition table move
+        if (entry != 0 && entry->move == order[i]) {
+            score[i] = 10;
             continue;
         }
 
@@ -293,7 +335,7 @@ int negamax(BoardState* board, int player, int alpha, int beta, HashTable* table
 
     // sort by the number of winning positions they create and 
     // don't explore the losing moves
-    int losingStart = sortMoves(board, nonLossingMoves, exploreOrder, player);
+    int losingStart = sortMoves(board, nonLossingMoves, exploreOrder, player, entry);
 
     // loop through moves until there are no more or a cutoff occures
     for (int i = 0; i < losingStart; i++) {
@@ -373,9 +415,9 @@ int solve(BoardState* board, int player, HashTable* table, int weak) {
             min = eval;
     }
 
-    // printf("Eval: %d\n", convertEval(eval, player, board));
-    // printf("Nodes: %lld\n", board->nodes);
-    // printf("Time: %f\n", (double)(clock() - start) / CLOCKS_PER_SEC);
+    printf("Eval: %d\n", convertEval(eval, player, board));
+    printf("Nodes: %lld\n", board->nodes);
+    printf("Time: %f\n", (double)(clock() - start) / CLOCKS_PER_SEC);
 
     return eval;
 }
@@ -389,9 +431,7 @@ int playGame(int player) {
     unsigned long long moves;
     unsigned long long move;
 
-    // test p1 win in 18 moves
-    board.p1 = 0b00000000000100000000000000010000000000000001000;
-    board.p2 = 0b00000000000000000001000000000000000100000000001;
+    int inBook = 1;
 
     // get a random hash for the board
     Entry* entry = table->entries + (board.hash % table->size);
@@ -415,11 +455,24 @@ int playGame(int player) {
 
         // get the computer move
         if (player || SELF_PLAY) {
-            solve(&board, player, table, WEAK_SOLVER);
-            entry = getEntry(table, board.hash);
-            move = moves & (moveMasker << entry->move);
-            makeMove(&board, move, player, table);
-            printf("Computer plays: %d\n", entry->move);
+            if (inBook) {
+                move = findBookMove(BOOK_DIR, &board);
+                if (move != -1) {
+                    printf("Book move: %d\n", move);
+                    move = moves & (moveMasker << move);
+                    makeMove(&board, move, player, table);
+                }
+                else {
+                    inBook = 0;
+                }
+            }
+            if (!inBook) {
+                solve(&board, player, table, WEAK_SOLVER);
+                entry = getEntry(table, board.hash);
+                move = moves & (moveMasker << entry->move);
+                makeMove(&board, move, player, table);
+                printf("Computer plays: %d\n", entry->move);
+            }
         }
         else {
             move = getMove();
@@ -451,12 +504,20 @@ unsigned long long nPlySearch(int n, BoardState* board, int player, HashTable* t
     unsigned long long moves = generateMoves(board);
     unsigned long long move;
 
+    if (!moves) {
+        return 1;
+    }
+
+    if (n == 0) {
+        return 1;
+    }
+
     for (int i = 0; i < WIDTH; i++) {
         move = moves & (MOVE_MASK << i);
 
         // check if the game is over
         if (!move) {
-            return 1;
+            continue;
         }
 
         makeMove(board, move, player, table);
@@ -465,15 +526,73 @@ unsigned long long nPlySearch(int n, BoardState* board, int player, HashTable* t
         if (isAligned(board, player)) {
             sum += 1;
         }
-        else if (n > 1) {
+        else {
             sum += nPlySearch(n - 1, board, !player, table);
         }
 
         makeMove(board, move, player, table);
     }
 
-    // return the sum and account for this node
-    return sum + 1;
+    // return the sum we only want to count leaf nodes
+    return sum;
+}
+
+// precompute opening moves by recursively enumerating moves the first n moves deep
+int computeBookRecursive(char* bookDir, BoardState* board, int player, HashTable* table, int depth) {
+    Entry* entry = getEntry(table, board->hash);
+    unsigned long long moves = generateMoves(board);
+    unsigned long long move;
+    int eval = -100;
+    int storeMove;
+
+    // once the search hits depth solve the position and add it to the book
+    if (depth >= BOOK_COMPUTE_DEPTH) {
+        eval = solve(board, player, table, WEAK_SOLVER);
+        entry = getEntry(table, board->hash);
+        storeMove = entry->move;
+    }
+
+    // otherwise explore like normal and backpropagate the eval to the root
+    else {
+        char exploreOrder[] = { 3, 2, 4, 1, 5, 0, 6 };
+        moves = getNonLosingMove(board, moves, player);
+        int losingStart = sortMoves(board, moves, exploreOrder, player, entry);
+        storeMove = exploreOrder[0];
+
+        for (int i = 0; i < losingStart; i++) {
+            move = moves & (MOVE_MASK << exploreOrder[i]);
+
+            // make move
+            makeMove(board, move, player, table);
+
+            int moveEval = -computeBookRecursive(bookDir, board, !player, table, depth + 1);
+
+            // un-make the move
+            makeMove(board, move, player, table);
+
+            // do not prune moves since we want an expansive book
+            if (moveEval > eval) {
+                eval = moveEval;
+                storeMove = exploreOrder[i];
+            }
+        }
+    }
+
+    // write the position to the book file
+    FILE* file = fopen(bookDir, "a");
+    fprintf(file, "%llu %llu %d %d\n", board->p1, board->p2, storeMove, eval);
+    fclose(file);
+
+    return eval;
+}
+
+void computeBook(char* bookDir) {
+    BoardState board;
+    initBoard(&board);
+    HashTable* table = initHashTable();
+    printf("Positions: %lld\n", nPlySearch(BOOK_COMPUTE_DEPTH, &board, 0, table));
+    computeBookRecursive(bookDir, &board, 1, table, 0);
+    freeHashTable(table);
 }
 
 // run the benchmark tests
@@ -516,42 +635,41 @@ int benchmark(char* filename) {
         // solve the board
         int found = solve(&board, player, table, WEAK_SOLVER);
 
+        if (expected != found && !WEAK_SOLVER) {
+            printf("\nError: %d %d\n", expected, found);
+            printBoard(board);
+            printBinBoard(board.hash);
+        }
+        else if (expected * found < 0 && WEAK_SOLVER) {
+            printf("\nError: %d %d\n", expected, found);
+            printBoard(board);
+            printBinBoard(board.hash);
+        }
+        else {
+            printf("\rSolved: %d", ++solved);
+        }
+
         // reset the board and hash table
         board.p1 = 0;
         board.p2 = 0;
         board.hash = 0;
-        memset(table->entries, 0, table->size * sizeof(Entry));
 
-        if (expected != found && !WEAK_SOLVER) {
-            printf("Error: %d %d\n", expected, found);
-            printBinBoard(board.p1);
-            printBinBoard(board.p2);
-            printBinBoard(board.hash);
-            break;
-        }
-        else if (expected * found < 0 && WEAK_SOLVER) {
-            printf("Error: %d %d\n", expected, found);
-            printBinBoard(board.p1);
-            printBinBoard(board.p2);
-            printBinBoard(board.hash);
-            break;
-        }
-        else {
-            printf("Solved: %d\n", ++solved);
-        }
+        // not clearing the table leads to hash collisions in some test positions!?
+        memset(table->entries, 0, table->size * sizeof(Entry));
     }
 
     // get the end time
     clock_t end = clock();
 
     // print the mean time per board
-    printf("Mean time per board: %f\n", (double)(end - start) / CLOCKS_PER_SEC / solved);
+    printf("\nMean time per board: %f\n", (double)(end - start) / CLOCKS_PER_SEC / solved);
 
     fclose(file);
 }
 
 int main(int argc, char* argv[]) {
-    benchmark(argv[1]);
+    //benchmark(argv[1]);
+    //computeBook("OpeningBook");
     playGame(0);
 }
 
