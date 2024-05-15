@@ -603,13 +603,16 @@ int benchmark(char* filename) {
         printf("Error opening file\n");
         return 1;
     }
-
+    
     // for each line of the file solve the board
     char line[100];
     BoardState board;
     initBoard(&board);
     HashTable* table = initHashTable();
     int solved = 0;
+
+    unsigned long long nodes = nPlySearch(BOOK_COMPUTE_DEPTH, &board, 0, table);
+    printf("Positions: %lld\n", nodes);
 
     // get the start time
     clock_t start = clock();
@@ -668,8 +671,17 @@ int benchmark(char* filename) {
 }
 
 int main(int argc, char* argv[]) {
-    //benchmark(argv[1]);
     //computeBook("OpeningBook");
-    playGame(0);
+    benchmark(argv[1]);
+
+    int player = 0;
+    printf("Enter 0 to play first or 1 to play second:\n");
+    scanf("%d", &player);
+    if (player != 0 && player != 1) {
+        printf("Invalid input\n");
+        return 1;
+    }
+
+    playGame(player);
 }
 
