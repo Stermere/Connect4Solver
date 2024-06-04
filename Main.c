@@ -2,7 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
-#include "HashTable.c"
+#include "HashTable.h"
 
 #define HEIGHT 6
 #define WIDTH 7
@@ -29,6 +29,12 @@ void initBoard(BoardState* board) {
     board->p2 = 0;
     board->hash = 0;
     board->nodes = 0;
+}
+
+BoardState* getInitBoard() {
+    BoardState* board = malloc(sizeof(BoardState));
+    initBoard(board);
+    return board;
 }
 
 void printBin(unsigned long long n) {
@@ -96,6 +102,12 @@ int getMove() {
     return move;
 }
 
+// get an initialized hash table
+HashTable* getInitTable() {
+    HashTable* table = initHashTable();
+    return table;
+}
+
 // converts the eval to moves to win 
 int convertEval(int eval, int player, BoardState* board) {
     if (eval == 0) {
@@ -113,7 +125,7 @@ int findBookMove(char* bookDir, BoardState* board) {
     FILE* file = fopen(bookDir, "r");
     if (file == NULL) {
         printf("Error opening file\n");
-        return 1;
+        return -1;
     }
 
     // for each line of the file check if the board matches
@@ -648,9 +660,7 @@ int benchmark(char* filename) {
             printBoard(board);
             printBinBoard(board.hash);
         }
-        else {
-            printf("\rSolved: %d", ++solved);
-        }
+        printf("Solved: %d\n", ++solved);
 
         // reset the board and hash table
         board.p1 = 0;

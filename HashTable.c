@@ -1,3 +1,5 @@
+#include <stdlib.h>
+
 #define HASH_TABLE_SIZE 64ull // in MB
 #define MB_SIZE 1000000ull
 
