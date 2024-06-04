@@ -1,5 +1,8 @@
 import ctypes
 import os
+from fast_get_pixel import PixelReader
+import mouse as Mouse
+import time
 
 class Connect4Engine:
     def __init__(self, lib_path):
@@ -79,36 +82,121 @@ class HashTable(ctypes.Structure):
         ("size", ctypes.c_ulonglong)
     ]
 
+
+class ScreenReader:
+    def __init__(self, board_size=(7, 6)):
+        self.pixel_reader = PixelReader()
+        self.board_size = board_size
+        self.board_size_px = None
+        self.base_color = None
+        self.top_left = None
+        self.bottom_right = None
+
+        self.board1 = None
+        self.player = None
+
+    def get_board_position(self, i, j):
+        return self.top_left[0] + (i * (self.board_size_px[0] // (self.board_size[0] - 1))), self.top_left[1] + (j * (self.board_size_px[1] // (self.board_size[1] - 1)))
+
+    def get_board(self):
+        board = [[0 for _ in range(self.board_size[1])] for _ in range(self.board_size[0])]
+        for i in range(self.board_size[0]):
+            for j in range(self.board_size[1]):
+                board[i][j] = self.pixel_reader.get_pixel_rgb(*self.get_board_position(i, j)) == self.base_color
+        return board
+
+    def get_move(self, board):
+        board = self.get_board()
+        for i in range(self.board_size[0]):
+            for j in range(self.board_size[1]):
+                if board[i][j] != self.board[i][j]:
+                    self.board = board
+                    print("Found move", i)
+                    return i
+
+        return False
+    
+    def make_move(self, move):
+        move = 6 - move
+        for i in range(self.board_size[1] - 1, -1, -1):
+            if self.board[move][i]:
+                Mouse.move(*self.get_board_position(move, i))
+                Mouse.click()
+                time.sleep(0.1)
+                Mouse.move(self.top_left[0] - (self.board_size_px[0] // self.board_size[0] - 1), self.top_left[1])
+                break
+        # set the position just plaied to True
+        self.board = self.get_board()
+        self.player = 1 - self.player
+
+    def calibrate(self):
+        input("Place mouse at top left of board and press enter")
+        self.top_left = Mouse.get_position()
+        input("Place mouse at bottom right of board and press enter")
+        self.bottom_right = Mouse.get_position()
+
+        self.board_size_px = (self.bottom_right[0] - self.top_left[0], self.bottom_right[1] - self.top_left[1])
+        self.base_color = self.pixel_reader.get_pixel_rgb(self.top_left[0], self.top_left[1])
+        Mouse.move(self.top_left[0] - (self.board_size_px[0] // self.board_size[0] - 1), self.top_left[1])
+
+        self.board = self.get_board()
+        self.player = self.find_player()
+
+    def reset(self):
+        self.board = self.get_board()
+        self.player = self.find_player()
+
+    def find_player(self):
+        for i in range(7):
+            for j in range(6):
+                if self.pixel_reader.get_pixel_rgb(*self.get_board_position(i, j)) != self.base_color:
+                    return 1
+        return 0
+    
+    def get_move_from_screen(self):
+        move = False
+        while move == False:
+            move = self.get_move(self.board)
+            time.sleep(0.1)
+        self.player = 1 - self.player
+        return 6 - move
+
+
 if __name__ == "__main__":
     # Path to the compiled shared library
     lib_path = "./TheConnector.dll"
     engine = Connect4Engine(lib_path)
-    in_book = True
-
-    # Example usage:0
-    player = int(input("Enter player (0 or 1): "))
     moveMask = 0b10000000100000001000000010000000100000001
+    in_book = True
+    screen_reader = ScreenReader()
+    screen_reader.calibrate()
     while True:
-        if player == 0:
-            # look in the book
-            if in_book:
-                move = engine.find_book_move(engine.book_path)
-                if move != -1:
+        input("Press enter to start")
+        screen_reader.reset()
+        bot_player = screen_reader.player
+        cur_player = bot_player
+        while True:
+            if cur_player == bot_player:
+                # look in the book
+                if in_book:
+                    move = engine.find_book_move(engine.book_path)
+                    if move != -1:
+                        possibleMoves = engine.generate_moves()
+                        engine.make_move(possibleMoves & (moveMask << move), cur_player)
+                        screen_reader.make_move(move)
+                    else:
+                        in_book = False
+                if not in_book:
+                    eval_ = engine.solve(cur_player, 1)
+                    move = engine.get_move()
                     possibleMoves = engine.generate_moves()
-                    engine.make_move(possibleMoves & (moveMask << move), player)
-                else:
-                    in_book = False
-            if not in_book:
-                eval_ = engine.solve(player, 1)
-                move = engine.get_move()
-                possibleMoves = engine.generate_moves()
-                print("Move: ", move)
-                engine.make_move(possibleMoves & (moveMask << move), player)
+                    engine.make_move(possibleMoves & (moveMask << move), cur_player)
+                    screen_reader.make_move(move)
 
-        elif player == 1:
-            move = int(input("Enter move: "))
-            possibleMoves = engine.generate_moves()
-            engine.make_move(possibleMoves & (moveMask << move), player)
-        engine.print_board()
-        print()
-        player = 1 - player
+            elif cur_player != bot_player:
+                move = screen_reader.get_move_from_screen()
+                possibleMoves = engine.generate_moves()
+                engine.make_move(possibleMoves & (moveMask << move), cur_player)
+            engine.print_board()
+            print()
+            cur_player = 1 - cur_player
