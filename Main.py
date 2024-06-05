@@ -5,7 +5,8 @@ import mouse as Mouse
 import time
 import random
 
-DELAT_RANGE = (1, 3)
+DELTA_RANGE = (0.1, 0.1)
+BOARD_SIZE = (7, 6)  # Default board size
 
 class Connect4Engine:
     def __init__(self, lib_path):
@@ -98,21 +99,25 @@ class HashTable(ctypes.Structure):
 
 
 class ScreenReader:
-    def __init__(self, board_size=(7, 6)):
+    def __init__(self, board_size=BOARD_SIZE, delay=0.1, delta_range=DELTA_RANGE):
         self.pixel_reader = PixelReader()
         self.board_size = board_size
         self.board_size_px = None
         self.base_color = None
         self.top_left = None
         self.bottom_right = None
-
-        self.board1 = None
+        self.delay = delay
+        self.delta_range = delta_range
+        self.board = None
         self.player = None
 
     def get_board_position(self, i, j):
-        return self.top_left[0] + (i * (self.board_size_px[0] // (self.board_size[0] - 1))), self.top_left[1] + (j * (self.board_size_px[1] // (self.board_size[1] - 1)))
+        # Calculate the position of a cell on the board
+        return (self.top_left[0] + (i * (self.board_size_px[0] // (self.board_size[0] - 1))),
+                self.top_left[1] + (j * (self.board_size_px[1] // (self.board_size[1] - 1))))
 
     def get_board(self):
+        # Read the current state of the board
         board = [[True for _ in range(self.board_size[1])] for _ in range(self.board_size[0])]
         for i in range(self.board_size[0]):
             for j in range(self.board_size[1]):
@@ -121,29 +126,37 @@ class ScreenReader:
 
     def get_move(self, board):
         board = self.get_board()
+        changes = []
         for i in range(self.board_size[0]):
             for j in range(self.board_size[1]):
                 if board[i][j] != self.board[i][j]:
-                    self.board = board
-                    print("Found move", i)
-                    return i
-        return -1
-    
+                    changes.append(i)
+        if len(changes) > 1:
+            input("Multiple changes detected. Press enter to continue.")
+            return self.get_move(board)
+        elif len(changes) == 1:
+            self.board = board
+            print("Found move", changes[0])
+            return changes[0]
+        else:
+            return -1
+
     def make_move(self, move):
-        move = 6 - move
+        move = self.board_size[0] - 1 - move
         for i in range(self.board_size[1] - 1, -1, -1):
             if self.board[move][i]:
                 Mouse.move(*self.get_board_position(move, i))
-                time.sleep(0.1 + random.uniform(*DELAT_RANGE))
+                time.sleep(self.delay + random.uniform(*self.delta_range))
                 Mouse.click()
-                time.sleep(0.1)
+                time.sleep(self.delay)
                 Mouse.move(self.top_left[0] - (self.board_size_px[0] // self.board_size[0] - 1), self.top_left[1])
                 break
-        time.sleep(0.1)
+        time.sleep(self.delay)
         self.board = self.get_board()
         self.player = 1 - self.player
 
     def calibrate(self):
+        # Calibrate the screen reader
         input("Place mouse at top left of board and press enter")
         self.top_left = Mouse.get_position()
         input("Place mouse at bottom right of board and press enter")
@@ -151,16 +164,19 @@ class ScreenReader:
 
         self.board_size_px = (self.bottom_right[0] - self.top_left[0], self.bottom_right[1] - self.top_left[1])
         self.base_color = self.pixel_reader.get_pixel_rgb(self.top_left[0], self.top_left[1])
-        Mouse.move(self.top_left[0] - (self.board_size_px[0] // self.board_size[0] - 1), self.top_left[1])
+        Mouse.move(self.top_left[0] - (self.board_size_px[0] // (self.board_size[0] - 1)), self.top_left[1])
 
         self.board = self.get_board()
+        assert sum(row.count(False) for row in self.board) in [0, 1], "Invalid calibration. Please try again."
         self.player = self.find_player()
 
     def reset(self):
+        # Reset the screen reader
         self.board = self.get_board()
         self.player = self.find_player()
 
     def getFirstMove(self):
+        # Get the first move made on the board
         for i in range(7):
             for j in range(6):
                 if not self.board[i][j]:
@@ -168,20 +184,22 @@ class ScreenReader:
         return -1
 
     def find_player(self):
+        # Find the current player
         for i in range(7):
             for j in range(6):
                 if self.pixel_reader.get_pixel_rgb(*self.get_board_position(i, j)) != self.base_color:
                     return 1
         return 0
-    
+
     def get_move_from_screen(self):
+        # Get the move made by the opponent from the screen
         move = -1
         while move == -1:
             move = self.get_move(self.board)
             time.sleep(0.1)
         self.player = 1 - self.player
         return 6 - move
-
+    
 
 if __name__ == "__main__":
     # Path to the compiled shared library
