@@ -5,7 +5,7 @@ import mouse as Mouse
 import time
 import random
 
-DELTA_RANGE = (0.1, 0.1)
+DELTA_RANGE = (0.0, 0.0)
 BOARD_SIZE = (7, 6)  # Default board size
 
 class Connect4Engine:
@@ -99,7 +99,7 @@ class HashTable(ctypes.Structure):
 
 
 class ScreenReader:
-    def __init__(self, board_size=BOARD_SIZE, delay=0.1, delta_range=DELTA_RANGE):
+    def __init__(self, board_size=BOARD_SIZE, delay=0.01, delta_range=DELTA_RANGE):
         self.pixel_reader = PixelReader()
         self.board_size = board_size
         self.board_size_px = None
@@ -132,8 +132,8 @@ class ScreenReader:
                 if board[i][j] != self.board[i][j]:
                     changes.append(i)
         if len(changes) > 1:
-            input("Multiple changes detected. Press enter to continue.")
-            return self.get_move(board)
+            print("Multiple changes detected. reseting the board.")
+            return -2
         elif len(changes) == 1:
             self.board = board
             print("Found move", changes[0])
@@ -198,6 +198,10 @@ class ScreenReader:
             move = self.get_move(self.board)
             time.sleep(0.1)
         self.player = 1 - self.player
+
+        if move == -2:
+            return -1
+
         return 6 - move
     
 
@@ -212,8 +216,10 @@ if __name__ == "__main__":
         input("Press enter to start")
         screen_reader.reset()
         in_book = True
+        in_first_move = True
         bot_player = screen_reader.player
         cur_player = bot_player
+        solve_type = 1
 
         # Pre Play the oponents first move
         if bot_player != 0:
@@ -224,7 +230,14 @@ if __name__ == "__main__":
         while True:
             if cur_player == bot_player:
                 # look in the book
-                if in_book:
+                if in_first_move:
+                    move = random.randint(0, 6)
+                    possibleMoves = engine.generate_moves()
+                    engine.make_move(possibleMoves & (moveMask << move), cur_player)
+                    screen_reader.make_move(move)
+                    in_first_move = False
+
+                elif in_book:
                     move = engine.find_book_move(engine.book_path)
                     if move != -1:
                         possibleMoves = engine.generate_moves()
@@ -233,7 +246,7 @@ if __name__ == "__main__":
                     else:
                         in_book = False
                 if not in_book:
-                    eval_ = engine.solve(cur_player, 1)
+                    eval_ = engine.solve(cur_player, solve_type)
                     move = engine.get_move()
                     possibleMoves = engine.generate_moves()
                     engine.make_move(possibleMoves & (moveMask << move), cur_player)
@@ -243,6 +256,10 @@ if __name__ == "__main__":
 
             elif cur_player != bot_player:
                 move = screen_reader.get_move_from_screen()
+                if move == -1:
+                    engine.reset_board()
+                    break
+
                 possibleMoves = engine.generate_moves()
                 engine.make_move(possibleMoves & (moveMask << move), cur_player)
                 engine.print_board()
@@ -252,5 +269,15 @@ if __name__ == "__main__":
                 print("Player", cur_player, "wins!")
                 engine.reset_board()
                 break
+
+            if engine.board.contents.p1 | engine.board.contents.p2 == 0xffffffffffff:
+                print("Draw!")
+                engine.reset_board()
+                break
+
+            # if there is more than 9 pieces on the board change solve to 0
+            if (engine.board.contents.p1 | engine.board.contents.p2).bit_count() > 6:
+                solve_type = 0
+                engine.hash_table = engine.lib.initHashTable()
 
             cur_player = 1 - cur_player
